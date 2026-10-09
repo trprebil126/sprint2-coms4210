@@ -1,0 +1,7 @@
+When building this project, I used a mix of tools including VS Code, Claude 4.5, and Stack Overflow. I gave Claude the project specifications and let it build a first draft of the webpage. I had Claude explain its thinking as well as explain the logic a buffer overflow a little bit deeper. This was useful considering part 2 of the sprint in which we also work with buffer overflow errors.
+
+I did manually verify that the website was displaying accurate information, as well as verify that the display code was working correctly and the webpage looked good. I did a couple manual fixes as well as fed Claude a couple more prompts to clean up some bugs/bad looking display.
+
+I then fed Claude more prompts based on display choices as well as more features that I felt like the project could use. With a project like this that is a more simplistic, it is definitely handy to be able to quickly implement features and save most human effort for verifying correctness of the information.
+
+I think it is very interesting working in AI-Assisted development for this class as that has not necessarily been a focal point for that many courses that I have taken. It definitely saved time in the development of the page, but I definitely had to be focused on making sure I was stil gaining the proper understanding of buffer overflow that was communicated with the assignment.
