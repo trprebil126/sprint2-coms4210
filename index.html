@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stack Smash Lab — Buffer Overflow Visualizer</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel2: #1c2330;
+    --border: #2d333f;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #2ea043;
+    --green-soft: rgba(46, 160, 67, 0.22);
+    --red: #f85149;
+    --red-soft: rgba(248, 81, 73, 0.22);
+    --amber: #d29922;
+    --amber-soft: rgba(210, 153, 34, 0.20);
+    --purple: #bc8cff;
+    --purple-soft: rgba(188, 140, 255, 0.16);
+    --blue: #58a6ff;
+    --blue-soft: rgba(88, 166, 255, 0.16);
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.45;
+  }
+
+  header {
+    padding: 22px 28px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #131a24, var(--bg));
+  }
+  header h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  header h1 .boom { color: var(--red); }
+  header p { margin: 0; color: var(--muted); max-width: 900px; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(430px, 1.15fr) minmax(340px, 1fr);
+    gap: 18px;
+    padding: 18px 28px 40px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .panel h2 {
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+
+  /* ---------- C code panel ---------- */
+  pre.code {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    background: #0a0e14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+  }
+  pre.code .ln { display: block; padding: 0 6px; border-radius: 4px; white-space: pre; }
+  pre.code .hl { background: rgba(248, 81, 73, 0.18); outline: 1px solid rgba(248, 81, 73, 0.5); }
+  .kw { color: #ff7b72; } .fn { color: #d2a8ff; } .cm { color: #8b949e; font-style: italic; }
+  .str { color: #a5d6ff; } .num { color: #79c0ff; }
+
+  /* ---------- Stack panel ---------- */
+  .stack-wrap { position: relative; }
+  .addr-caption { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); text-align: center; }
+  .mem-group { margin: 10px 0; }
+  .mem-group .glabel {
+    font-size: 0.78rem; font-weight: 600; margin-bottom: 5px;
+    display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  }
+  .mem-group .glabel .note { color: var(--muted); font-weight: 400; }
+  .mem-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .cell {
+    width: 52px; min-width: 52px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel2);
+    text-align: center;
+    padding: 4px 2px 3px;
+    font-family: var(--mono);
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .cell .addr { display: block; font-size: 0.56rem; color: var(--muted); letter-spacing: -0.02em; }
+  .cell .hex { display: block; font-size: 0.98rem; font-weight: 700; }
+  .cell .chr { display: block; font-size: 0.68rem; color: var(--muted); min-height: 0.9em; }
+
+  .cell.r-buffer.written { background: var(--green-soft); border-color: var(--green); }
+  .cell.written.overflow { background: var(--red-soft); border-color: var(--red); }
+  .cell.written.overflow .hex { color: var(--red); }
+  .cell.r-canary { border-color: rgba(210,153,34,.55); }
+  .cell.r-canary.written.overflow { border-color: var(--red); }
+  .cell.r-ebp { border-color: rgba(188,140,255,.45); }
+  .cell.r-ret { border-color: rgba(88,166,255,.45); }
+  .cell.active {
+    outline: 2px solid #f0f6fc;
+    transform: translateY(-2px);
+    box-shadow: 0 0 12px rgba(240, 246, 252, 0.35);
+  }
+
+  .g-canary .glabel { color: var(--amber); }
+  .g-ebp .glabel { color: var(--purple); }
+  .g-ret .glabel { color: var(--blue); }
+  .g-buffer .glabel { color: var(--green); }
+
+  .write-arrow {
+    text-align: center; color: var(--muted); font-size: 0.78rem; margin: 8px 0 2px;
+    font-family: var(--mono);
+  }
+  .write-arrow b { color: var(--red); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; font-size: 0.75rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid var(--border); }
+
+  /* Crash effect */
+  @keyframes shake {
+    0%, 100% { transform: translate(0, 0); }
+    20% { transform: translate(-7px, 3px) rotate(-0.6deg); }
+    40% { transform: translate(6px, -4px) rotate(0.6deg); }
+    60% { transform: translate(-5px, -3px); }
+    80% { transform: translate(5px, 4px); }
+  }
+  body.crash .stack-wrap { animation: shake 0.5s ease-in-out 2; border: 1px solid var(--red); border-radius: 8px; }
+  body.crash { background: #180d0d; }
+
+  /* ---------- Controls ---------- */
+  .controls label { display: block; font-size: 0.8rem; color: var(--muted); margin: 10px 0 4px; }
+  .controls input[type="text"], .controls select {
+    width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: #0a0e14; color: var(--text); font-family: var(--mono); font-size: 0.9rem;
+  }
+  .controls input[type="text"]:focus { outline: 2px solid var(--blue); }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  button {
+    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-weight: 600; font-size: 0.85rem;
+    cursor: pointer; transition: filter 0.12s, transform 0.08s;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.25); }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  button.danger { background: #6e2222; border-color: #8f2b2b; }
+  .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 0.85rem; }
+  .toggle-row input { accent-color: var(--amber); width: 16px; height: 16px; }
+  .speed-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 0.78rem; color: var(--muted); }
+  .speed-row input { flex: 1; accent-color: var(--blue); }
+  .byte-preview { font-family: var(--mono); font-size: 0.78rem; margin-top: 6px; color: var(--muted); }
+  .byte-preview.warn { color: var(--red); font-weight: 700; }
+
+  /* ---------- Status + monitors ---------- */
+  #status {
+    border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; margin-bottom: 18px;
+    border: 1px solid var(--border); background: var(--panel); min-height: 2.6em;
+  }
+  #status.ok { border-color: var(--green); background: var(--green-soft); }
+  #status.warn { border-color: var(--amber); background: var(--amber-soft); }
+  #status.danger { border-color: var(--red); background: var(--red-soft); }
+  #status.info { border-color: var(--blue); background: var(--blue-soft); }
+
+  .monitors { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .monitor {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-family: var(--mono); font-size: 0.78rem;
+  }
+  .monitor .mname { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .monitor .mval { font-size: 0.95rem; font-weight: 700; margin-top: 2px; word-break: break-all; }
+  .monitor.bad .mval { color: var(--red); }
+  .monitor.good .mval { color: var(--green); }
+  .monitor.neutral .mval { color: var(--text); }
+
+  /* ---------- Log ---------- */
+  #log {
+    font-family: var(--mono); font-size: 0.76rem; background: #0a0e14;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+    height: 190px; overflow-y: auto; white-space: pre-wrap;
+  }
+  #log .l-ok { color: var(--green); }
+  #log .l-bad { color: var(--red); }
+  #log .l-info { color: var(--muted); }
+  #log .l-warn { color: var(--amber); }
+
+  /* ---------- Learn section ---------- */
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+  details p, details li { font-size: 0.86rem; color: #c6d0da; }
+  details code { font-family: var(--mono); background: #0a0e14; padding: 1px 5px; border-radius: 4px; font-size: 0.8rem; }
+
+  footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 10px 0 30px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Stack Smash Lab <span class="boom">💥</span></h1>
+  <p>An interactive, safe visualization of a classic <b>stack-frame buffer overflow</b>.
+     Type a string, run a vulnerable <code>strcpy()</code>, and watch what happens to the
+     buffer, the saved frame pointer, and the return address. No real exploit — just the concept.</p>
+</header>
+
+<main>
+  <!-- ================= LEFT COLUMN ================= -->
+  <section>
+    <div class="panel">
+      <h2>The vulnerable C program</h2>
+      <pre class="code" id="ccode"><span class="ln"><span class="cm">// greet() copies user input into a fixed-size buffer.</span></span>
+<span class="ln"><span class="cm">// strcpy() does NOT check the destination size!</span></span>
+<span class="ln"><span class="kw">void</span> <span class="fn">greet</span>(<span class="kw">const char</span> *input) {</span>
+<span class="ln">    <span class="kw">char</span> buffer[<span class="num">16</span>];</span>
+<span class="ln" id="line-strcpy">    <span class="fn">strcpy</span>(buffer, input);  <span class="cm">// ← the bug</span></span>
+<span class="ln">    <span class="fn">printf</span>(<span class="str">"Hello, %s!\n"</span>, buffer);</span>
+<span class="ln">}  <span class="cm">// ← on return, CPU jumps to the saved return address</span></span></pre>
+    </div>
+
+    <div class="panel">
+      <h2>Stack frame of greet()</h2>
+      <div class="stack-wrap" id="stackWrap">
+        <div class="addr-caption">▲ higher addresses</div>
+        <div id="stack"><!-- rendered by JS --></div>
+        <div class="addr-caption">▼ lower addresses — <code>buffer[0]</code> lives here</div>
+        <div class="write-arrow"><code>strcpy</code> writes from <b>bottom → top</b> (toward the return address)</div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--green-soft);border-color:var(--green)"></i> in-bounds write</span>
+        <span><i style="background:var(--red-soft);border-color:var(--red)"></i> overflow write</span>
+        <span><i style="background:var(--amber-soft);border-color:var(--amber)"></i> stack canary</span>
+        <span><i style="background:var(--purple-soft);border-color:var(--purple)"></i> saved frame pointer (EBP)</span>
+        <span><i style="background:var(--blue-soft);border-color:var(--blue)"></i> return address</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RIGHT COLUMN ================= -->
+  <section>
+    <div class="panel controls">
+      <h2>Controls</h2>
+
+      <label for="preset">Scenario presets</label>
+      <select id="preset">
+        <option value="">— choose a preset (or type your own) —</option>
+        <option value="HELLO">Safe input (5 chars)</option>
+        <option value="ABCDEFGHIJKLMNO">Exact fit (15 chars + NUL = 16 bytes)</option>
+        <option value="ABCDEFGHIJKLMNOP">Off-by-one (16 chars + NUL = 17 bytes)</option>
+        <option value="THIS_INPUT_IS_WAY_TOO_LONG!!">Stack smash (28 chars + NUL = 29 bytes)</option>
+      </select>
+
+      <label for="userInput">Your input string (max 48 chars)</label>
+      <input type="text" id="userInput" maxlength="48" placeholder="Type a string, e.g. HELLO" autocomplete="off" />
+      <div class="byte-preview" id="bytePreview">0 chars + NUL terminator = 1 byte will be written</div>
+
+      <div class="btn-row">
+        <button class="primary" id="runBtn">▶ Run strcpy()</button>
+        <button id="stepBtn">⏭ Step one byte</button>
+        <button class="danger" id="retBtn" disabled>↩ Execute return</button>
+        <button id="resetBtn">⟲ Reset</button>
+      </div>
+
+      <div class="speed-row">
+        <span>fast</span>
+        <input type="range" id="speed" min="40" max="700" step="10" value="220" />
+        <span>slow</span>
+      </div>
+
+      <div class="toggle-row">
+        <input type="checkbox" id="canaryToggle" />
+        <label for="canaryToggle" style="margin:0">🛡️ Enable <b>stack canary</b> protection (compiler mitigation)</label>
+      </div>
+    </div>
+
+    <div id="status">Enter a string and press <b>Run strcpy()</b>.</div>
+
+    <div class="panel">
+      <h2>Live memory monitors</h2>
+      <div class="monitors">
+        <div class="monitor neutral" id="monCanary"><div class="mname">Canary</div><div class="mval">off</div></div>
+        <div class="monitor neutral" id="monEbp"><div class="mname">Saved EBP</div><div class="mval">0x7FFFFFA0</div></div>
+        <div class="monitor neutral" id="monRet"><div class="mname">Return address</div><div class="mval">0x08048312</div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Execution log</h2>
+      <div id="log"></div>
+    </div>
+
+    <details>
+      <summary>📖 What just happened?</summary>
+      <p>When <code>greet()</code> is called, the CPU pushes a <b>return address</b> onto the stack so it knows
+      where to continue in <code>main()</code> afterwards. Then it saves the caller's <b>frame pointer (EBP)</b>,
+      and finally reserves 16 bytes for <code>buffer</code> at lower addresses.</p>
+      <p><code>strcpy()</code> copies bytes one at a time — including the terminating <code>NUL</code> (00) byte —
+      and <i>never checks</i> whether the destination has room. Input longer than 15 characters keeps writing
+      upward: first into the saved EBP, then over the return address.</p>
+      <p>When the function later executes <code>return</code>, the CPU trusts whatever bytes now sit in the return-address
+      slot and jumps there. In this lab that means a crash (SIGSEGV). In real historical attacks, those bytes were
+      chosen to point at attacker-supplied code — which is why this bug class mattered so much.</p>
+    </details>
+
+    <details>
+      <summary>🛡️ How is this prevented in the real world?</summary>
+      <ul>
+        <li><b>Bounds-checked functions</b>: <code>strncpy</code>, <code>snprintf</code>, <code>fgets</code> — or memory-safe languages (Rust, Go, Python) that check bounds automatically.</li>
+        <li><b>Stack canaries</b>: the compiler places a random value between locals and the saved registers and verifies it before returning (toggle it above!).</li>
+        <li><b>ASLR</b> (Address Space Layout Randomization): memory layout changes every run, so attackers can't predict addresses.</li>
+        <li><b>NX bit / DEP</b>: the stack is marked non-executable, so injected bytes can't run as code.</li>
+      </ul>
+    </details>
+
+    <details>
+      <summary>🕰️ Why should I care? A bit of history</summary>
+      <p>The 1988 <b>Morris Worm</b> — one of the first internet worms — spread partly by overflowing the
+      512-byte buffer of the <code>fingerd</code> daemon, which used the unchecked <code>gets()</code>.
+      Decades later, buffer overflows powered <b>Code Red</b>, <b>Slammer</b>, and countless CVEs.
+      Understanding the stack frame is step one to understanding memory safety.</p>
+    </details>
+  </section>
+</main>
+
+<footer>Educational simulation — all "memory" shown here is fake and lives only in this page.</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Model ----------
+  const BUF_SIZE = 16;
+  const BASE = 0x7fffff60;                 // address of buffer[0]
+  const RET_INIT  = [0x12, 0x83, 0x04, 0x08]; // 0x08048312 — &main
+  const EBP_INIT  = [0xa0, 0xff, 0xff, 0x7f]; // 0x7fffffa0
+  const CANARY_INIT = [0xd9, 0x11, 0x7c, 0x3a]; // "random" canary
+
+  let slots = [];        // flat array, low address -> high address
+  let canaryOn = false;
+  let inputBytes = [];   // user bytes + NUL terminator
+  let writeIndex = 0;
+  let running = false;
+  let copyDone = false;
+  let crashed = false;
+  let timer = null;
+  let stepNo = 0;
+
+  // ---------- DOM ----------
+  const $ = (id) => document.getElementById(id);
+  const stackEl = $("stack"), statusEl = $("status"), logEl = $("log");
+  const inputEl = $("userInput"), presetEl = $("preset");
+  const runBtn = $("runBtn"), stepBtn = $("stepBtn"), retBtn = $("retBtn"), resetBtn = $("resetBtn");
+  const speedEl = $("speed"), canaryEl = $("canaryToggle"), previewEl = $("bytePreview");
+
+  const hex = (b) => b.toString(16).toUpperCase().padStart(2, "0");
+  const addrStr = (a) => "0x" + a.toString(16).toUpperCase().padStart(8, "0");
+  const chrOf = (b) => (b >= 32 && b <= 126 ? String.fromCharCode(b) : "·");
+
+  // ---------- Layout / rendering ----------
+  const REGION_INFO = {
+    ret:    { cls: "g-ret",    title: "RETURN ADDRESS", note: "CPU jumps here when greet() returns" },
+    ebp:    { cls: "g-ebp",    title: "SAVED EBP",      note: "caller's frame pointer" },
+    canary: { cls: "g-canary", title: "STACK CANARY",   note: "checked before return — aborts if changed" },
+    buffer: { cls: "g-buffer", title: "buffer[16]",     note: "the 16-byte destination of strcpy" },
+  };
+
+  function buildLayout() {
+    slots = [];
+    for (let i = 0; i < BUF_SIZE; i++)
+      slots.push({ region: "buffer", addr: BASE + i, value: 0x00, written: false, overflow: false });
+    let next = BASE + BUF_SIZE;
+    if (canaryOn) {
+      for (let j = 0; j < 4; j++)
+        slots.push({ region: "canary", addr: next + j, value: CANARY_INIT[j], written: false, overflow: false });
+      next += 4;
+    }
+    for (let j = 0; j < 4; j++)
+      slots.push({ region: "ebp", addr: next + j, value: EBP_INIT[j], written: false, overflow: false });
+    next += 4;
+    for (let j = 0; j < 4; j++)
+      slots.push({ region: "ret", addr: next + j, value: RET_INIT[j], written: false, overflow: false });
+  }
+
+  function renderStack() {
+    stackEl.innerHTML = "";
+    const byRegion = (r) => slots.map((s, i) => ({ s, i })).filter((o) => o.s.region === r);
+
+    function makeGroup(region, entries) {
+      const g = document.createElement("div");
+      g.className = "mem-group " + REGION_INFO[region].cls;
+      const info = REGION_INFO[region];
+      g.innerHTML = `<div class="glabel"><span>${info.title}</span><span class="note">${info.note}</span></div>`;
+      const row = document.createElement("div");
+      row.className = "mem-row";
+      for (const { s, i } of entries) row.appendChild(makeCell(s, i));
+      g.appendChild(row);
+      return g;
+    }
+
+    function makeCell(s, i) {
+      const c = document.createElement("div");
+      c.className = "cell r-" + s.region;
+      c.id = "slot-" + i;
+      c.title = addrStr(s.addr);
+      c.innerHTML = `<span class="addr">${addrStr(s.addr)}</span>` +
+                    `<span class="hex">${hex(s.value)}</span>` +
+                    `<span class="chr">${chrOf(s.value)}</span>`;
+      return c;
+    }
+
+    // Display top -> bottom = high addresses -> low addresses
+    stackEl.appendChild(makeGroup("ret", byRegion("ret")));
+    stackEl.appendChild(makeGroup("ebp", byRegion("ebp")));
+    if (canaryOn) stackEl.appendChild(makeGroup("canary", byRegion("canary")));
+    const buf = byRegion("buffer");
+    stackEl.appendChild(makeGroup("buffer", buf.slice(8, 16)));  // buffer[8..15] (higher)
+    stackEl.appendChild(makeGroup("buffer", buf.slice(0, 8)));   // buffer[0..7]  (lower)
+  }
+
+  function updateCell(i) {
+    const s = slots[i];
+    const c = $("slot-" + i);
+    if (!c) return;
+    c.querySelector(".hex").textContent = hex(s.value);
+    c.querySelector(".chr").textContent = chrOf(s.value);
+    c.classList.toggle("written", s.written);
+    c.classList.toggle("overflow", s.overflow);
+    document.querySelectorAll(".cell.active").forEach((e) => e.classList.remove("active"));
+    c.classList.add("active");
+  }
+
+  // ---------- Log & status ----------
+  function log(msg, cls) {
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  function setStatus(html, cls) {
+    statusEl.innerHTML = html;
+    statusEl.className = cls || "";
+  }
+
+  // ---------- Monitors ----------
+  const regionBytes = (r) => slots.filter((s) => s.region === r).map((s) => s.value);
+  const regionHexValue = (r) => "0x" + regionBytes(r).map(hex).join("");
+  const regionCorrupted = (r, init) => regionBytes(r).some((v, i) => v !== init[i]);
+
+  function updateMonitors() {
+    const mC = $("monCanary"), mE = $("monEbp"), mR = $("monRet");
+    if (canaryOn) {
+      const bad = regionCorrupted("canary", CANARY_INIT);
+      mC.querySelector(".mval").textContent = regionHexValue("canary") + (bad ? " ✗" : " ✓");
+      mC.className = "monitor " + (bad ? "bad" : "good");
+    } else {
+      mC.querySelector(".mval").textContent = "off";
+      mC.className = "monitor neutral";
+    }
+    const ebpBad = regionCorrupted("ebp", EBP_INIT);
+    mE.querySelector(".mval").textContent = regionHexValue("ebp");
+    mE.className = "monitor " + (ebpBad ? "bad" : "good");
+    const retBad = regionCorrupted("ret", RET_INIT);
+    mR.querySelector(".mval").textContent = regionHexValue("ret");
+    mR.className = "monitor " + (retBad ? "bad" : "good");
+  }
+
+  // ---------- Simulation ----------
+  function bytesFromInput() {
+    const txt = inputEl.value.slice(0, 48);
+    const arr = Array.from(txt).map((ch) => ch.charCodeAt(0) & 0xff);
+    arr.push(0x00); // strcpy always appends the NUL terminator
+    return arr;
+  }
+
+  function updatePreview() {
+    const n = Array.from(inputEl.value.slice(0, 48)).length;
+    const total = n + 1;
+    previewEl.textContent = `${n} char(s) + NUL terminator = ${total} byte(s) will be written`;
+    previewEl.classList.toggle("warn", total > BUF_SIZE);
+    if (total > BUF_SIZE)
+      previewEl.textContent += `  ⚠ ${total - BUF_SIZE} byte(s) past the buffer!`;
+  }
+
+  function writeByte() {
+    if (writeIndex >= inputBytes.length) return false;
+    const b = inputBytes[writeIndex];
+    const pos = writeIndex;           // offset from buffer[0]
+    writeIndex++;
+    stepNo++;
+
+    const label = b === 0 ? "NUL (terminator)" : `'${chrOf(b)}' (${hex(b)})`;
+    if (pos < slots.length) {
+      const s = slots[pos];
+      s.value = b;
+      s.written = true;
+      s.overflow = pos >= BUF_SIZE;
+      updateCell(pos);
+      const where = s.overflow ? "  ⚠ OVERFLOW" : "";
+      log(`#${String(stepNo).padStart(2, "0")} write ${label} → ${addrStr(s.addr)} [${s.region}]${where}`,
+          s.overflow ? "l-bad" : "l-ok");
+    } else {
+      log(`#${String(stepNo).padStart(2, "0")} write ${label} → beyond mapped frame (corrupts caller data)`, "l-bad");
+    }
+    updateMonitors();
+
+    if (writeIndex >= inputBytes.length) { finishCopy(); return false; }
+    return true;
+  }
+
+  function finishCopy() {
+    copyDone = true;
+    running = false;
+    runBtn.disabled = true;
+    stepBtn.disabled = true;
+    $("line-strcpy").classList.remove("hl");
+
+    const total = inputBytes.length;
+    const overflow = Math.max(0, total - BUF_SIZE);
+    const canaryBad = canaryOn && regionCorrupted("canary", CANARY_INIT);
+    const ebpBad = regionCorrupted("ebp", EBP_INIT);
+    const retBad = regionCorrupted("ret", RET_INIT);
+
+    if (canaryBad) {
+      setStatus(`🛡️ <b>Stack smashing detected!</b> The canary changed, so the program
+        <b>aborts safely</b> before <code>greet()</code> returns. The overflow was contained.`, "info");
+      log("*** stack smashing detected ***: terminated", "l-warn");
+      log("The canary was checked before 'return' — the corrupted return address was never used.", "l-info");
+      retBtn.disabled = true;
+    } else if (overflow === 0) {
+      setStatus(`✅ <b>Safe.</b> ${total} byte(s) written — everything fit inside the 16-byte buffer.
+        Press <b>Execute return</b> to return to main().`, "ok");
+      log(`strcpy finished: ${total} byte(s), no overflow.`, "l-ok");
+      retBtn.disabled = false;
+    } else {
+      const hit = [];
+      if (canaryOn && canaryBad) hit.push("canary");
+      if (ebpBad) hit.push("saved EBP");
+      if (retBad) hit.push("RETURN ADDRESS");
+      setStatus(`⚠️ <b>Buffer overflow!</b> ${overflow} byte(s) spilled past the buffer and overwrote:
+        <b>${hit.join(", ") || "memory past the frame"}</b>.
+        Press <b>Execute return</b> to see what the CPU does with it.`, "warn");
+      log(`strcpy finished: ${total} byte(s) — ${overflow} byte(s) OVERFLOWED the buffer!`, "l-bad");
+      retBtn.disabled = false;
+    }
+  }
+
+  function doReturn() {
+    if (!copyDone || crashed) return;
+    const retBad = regionCorrupted("ret", RET_INIT);
+    const retVal = regionHexValue("ret");
+    retBtn.disabled = true;
+    if (retBad) {
+      crashed = true;
+      document.body.classList.add("crash");
+      log(`return: CPU pops ${retVal} from the stack and jumps there...`, "l-bad");
+      log("SIGSEGV — segmentation fault. That address is not valid code. Program crashed.", "l-bad");
+      setStatus(`💥 <b>Segmentation fault!</b> <code>greet()</code> trusted the corrupted return address
+        and jumped to <code>${retVal}</code> — garbage left by your input. In a real exploit, an attacker
+        chooses those bytes to point at their own code. Here, we just crash safely.`, "danger");
+    } else {
+      const ebpNote = regionCorrupted("ebp", EBP_INIT)
+        ? " (The saved EBP was corrupted though — in a real program that can crash the caller later!)"
+        : "";
+      log(`return: CPU jumps back to ${retVal} (&main). Everything is fine.${ebpNote}`, "l-ok");
+      setStatus(`✅ Returned cleanly to <code>${retVal}</code> (&main).${ebpNote}`, "ok");
+    }
+  }
+
+  function tick() {
+    if (!running) return;
+    const more = writeByte();
+    if (more && running) timer = setTimeout(tick, 750 - parseInt(speedEl.value, 10));
+  }
+
+  function startRun() {
+    if (running || copyDone) return;
+    inputBytes = bytesFromInput();
+    running = true;
+    runBtn.disabled = true;
+    stepBtn.disabled = true;
+    presetEl.disabled = true;
+    inputEl.disabled = true;
+    $("line-strcpy").classList.add("hl");
+    setStatus("✍️ <code>strcpy()</code> is copying, byte by byte…", "");
+    log(`strcpy(buffer, input) — copying ${inputBytes.length} byte(s) into a 16-byte buffer…`, "l-info");
+    tick();
+  }
+
+  function reset() {
+    clearTimeout(timer);
+    running = false; copyDone = false; crashed = false;
+    writeIndex = 0; stepNo = 0;
+    document.body.classList.remove("crash");
+    buildLayout();
+    renderStack();
+    updateMonitors();
+    logEl.innerHTML = "";
+    log("Stack frame created. buffer is empty; return address = 0x08048312 (&main).", "l-info");
+    setStatus("Enter a string and press <b>Run strcpy()</b>.", "");
+    runBtn.disabled = false;
+    stepBtn.disabled = false;
+    retBtn.disabled = true;
+    presetEl.disabled = false;
+    inputEl.disabled = false;
+    $("line-strcpy").classList.remove("hl");
+    updatePreview();
+  }
+
+  // ---------- Events ----------
+  runBtn.addEventListener("click", startRun);
+  stepBtn.addEventListener("click", () => {
+    if (running || copyDone) return;
+    if (writeIndex === 0) {
+      inputBytes = bytesFromInput();
+      $("line-strcpy").classList.add("hl");
+      log(`strcpy(buffer, input) — stepping through ${inputBytes.length} byte(s)…`, "l-info");
+      setStatus("✍️ Stepping through <code>strcpy()</code> one byte at a time…", "");
+    }
+    writeByte();
+  });
+  retBtn.addEventListener("click", doReturn);
+  resetBtn.addEventListener("click", reset);
+  inputEl.addEventListener("input", () => { if (!running) reset(); });
+  inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && !runBtn.disabled) startRun(); });
+  presetEl.addEventListener("change", () => {
+    if (presetEl.value !== "") inputEl.value = presetEl.value;
+    reset();
+    inputEl.focus();
+  });
+  canaryEl.addEventListener("change", () => {
+    canaryOn = canaryEl.checked;
+    reset();
+    log(canaryOn
+      ? "Compiler inserted a stack canary between the buffer and saved EBP."
+      : "Canary protection removed — the frame is laid out the old, vulnerable way.", "l-warn");
+  });
+
+  // ---------- Init ----------
+  reset();
+})();
+</script>
+</body>
+</html>
