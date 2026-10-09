@@ -282,9 +282,9 @@
       </div>
 
       <div class="speed-row">
-        <span>fast</span>
-        <input type="range" id="speed" min="40" max="700" step="10" value="220" />
         <span>slow</span>
+        <input type="range" id="speed" min="40" max="700" step="10" value="450" />
+        <span>fast</span>
       </div>
 
       <div class="toggle-row">
@@ -464,7 +464,9 @@
 
   // ---------- Monitors ----------
   const regionBytes = (r) => slots.filter((s) => s.region === r).map((s) => s.value);
-  const regionHexValue = (r) => "0x" + regionBytes(r).map(hex).join("");
+  // x86 is little-endian: the first byte in memory is the LEAST significant byte,
+  // so reverse the bytes to show the value the way the CPU will interpret it.
+  const regionHexValue = (r) => "0x" + regionBytes(r).map(hex).reverse().join("");
   const regionCorrupted = (r, init) => regionBytes(r).some((v, i) => v !== init[i]);
 
   function updateMonitors() {
@@ -533,6 +535,8 @@
     running = false;
     runBtn.disabled = true;
     stepBtn.disabled = true;
+    presetEl.disabled = false;
+    inputEl.disabled = false;
     $("line-strcpy").classList.remove("hl");
 
     const total = inputBytes.length;
